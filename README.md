@@ -571,8 +571,9 @@ class EloquentTracker implements DocumentTracker
             ->limit($limit)
             ->get()
             ->map(fn ($row) => [
-                'id' => $row->ektir_id,
-                'previous_status' => $row->mydata_status,
+                'id'               => $row->ektir_id,
+                'previous_status'  => $row->mydata_status,
+                'previous_has_pdf' => $row->pdf_url !== null,   // required for DocumentPdfReady
             ]);
     }
 

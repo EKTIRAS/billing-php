@@ -42,10 +42,23 @@ class Client
         return $this->send('PATCH', $path, body: $body);
     }
 
+    /**
+     * Download an arbitrary (typically signed) URL without sending the API
+     * Bearer token. Used for PDF fetches — the signed URL carries its own
+     * authentication, so leaking the API key to that host is both
+     * unnecessary and a latent token-leak risk.
+     */
     public function stream(string $url): string
     {
         try {
-            $response = $this->baseRequest()->timeout($this->timeout * 2)->get($url);
+            $response = Http::timeout($this->timeout * 2)
+                ->retry(
+                    $this->retryTimes,
+                    $this->retrySleepMs,
+                    fn ($exception) => $exception instanceof ConnectionException,
+                    throw: false,
+                )
+                ->get($url);
         } catch (ConnectionException $e) {
             throw new TimeoutException($e->getMessage());
         }
