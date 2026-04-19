@@ -57,5 +57,4 @@ class EktirBillingServiceProvider extends ServiceProvider implements DeferrableP
             });
         }
     }
-
 }

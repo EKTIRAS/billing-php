@@ -4,6 +4,41 @@ All notable changes to `ektiras/billing-php` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-04-19
+
+Pairs with the server's API v1.1 release (same commit series in
+`ektir-billing`). Additive SDK features — existing v0.2.x callers keep
+working unchanged.
+
+### Added
+- **Line items on `Document`.** `GET /documents/{id}` and list responses
+  now include each document's items. Accessible as `$doc->items[]` — an
+  array of typed `LineItem` DTOs with `productCode`, `descriptionEl`,
+  `descriptionEn`, `itemType`, `quantity`, `unitPrice`, `vatRate`,
+  `netTotal`, `vatTotal`.
+- **Richer `documents()->list()` filters:** `mark`, `full_number`,
+  `customer_email`, `customer_company`, `source`. Mark and source are
+  exact; the others are LIKE-partial. All backed by existing DB indexes.
+- **`products()->list(includeInactive: true)`** surfaces disabled
+  products — useful for admin UIs.
+- **`stats()->monthly(int $months = 12)`** returns a `MonthlyStats` DTO
+  with per-source revenue series (same data the web dashboard chart
+  uses). Accepts 1–36 months.
+- **`documents()->regeneratePdf(int $id)`** re-renders the PDF for a
+  submitted document. Only legal for `submitted` — others return 422.
+
+### Changed
+- **Server no longer accepts `send_email`.** Passing it to the raw
+  REST `POST /documents` now returns a 422 `validation_failed` with a
+  helpful pointer to the integrator-owned email pattern. The SDK
+  never emitted this field since v0.2.0, so existing SDK users see no
+  change.
+
+### Added (server-side, for context)
+- New `POST /api/v1/documents/{id}/regenerate-pdf` endpoint.
+- New `GET /api/v1/stats/monthly` endpoint.
+- Products/Documents list responses gained filters and items.
+
 ## [0.2.1] — 2026-04-19
 
 ### Security

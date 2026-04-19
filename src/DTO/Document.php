@@ -27,6 +27,8 @@ final class Document
         public readonly MyDataStatus $myDataStatus,
         public readonly ?string $myDataEnvironment,
         public readonly ?string $issuedAt,
+        /** @var LineItem[] */
+        public readonly array $items = [],
         public readonly array $raw = [],
     ) {}
 
@@ -50,6 +52,10 @@ final class Document
             myDataStatus: self::enum(MyDataStatus::class, (string) $data['mydata_status'], 'mydata_status'),
             myDataEnvironment: $data['mydata_environment'] ?? null,
             issuedAt: $data['issued_at'] ?? null,
+            items: array_map(
+                fn (array $i) => LineItem::fromArray($i),
+                $data['items'] ?? [],
+            ),
             raw: $data,
         );
     }
@@ -60,6 +66,7 @@ final class Document
      * server returns a case the SDK doesn't know about.
      *
      * @template T of \BackedEnum
+     *
      * @param  class-string<T>  $enumClass
      * @return T
      */

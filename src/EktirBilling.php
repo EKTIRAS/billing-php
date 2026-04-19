@@ -10,7 +10,9 @@ use Ektir\Billing\Resources\Stats;
 class EktirBilling
 {
     protected ?Documents $documents = null;
+
     protected ?Products $products = null;
+
     protected ?Stats $stats = null;
 
     public function __construct(protected Client $client) {}

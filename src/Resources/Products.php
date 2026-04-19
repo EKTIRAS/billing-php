@@ -9,10 +9,14 @@ class Products
 {
     public function __construct(protected Client $client) {}
 
-    /** @return Product[] */
-    public function list(): array
+    /**
+     * @param  bool  $includeInactive  when true, returns disabled products too
+     * @return Product[]
+     */
+    public function list(bool $includeInactive = false): array
     {
-        $body = $this->client->get('products');
+        $body = $this->client->get('products', $includeInactive ? ['include_inactive' => 1] : []);
+
         return array_map(fn (array $p) => Product::fromArray($p), $body['data'] ?? []);
     }
 
