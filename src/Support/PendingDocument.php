@@ -7,6 +7,7 @@ use Ektir\Billing\DTO\Document;
 use Ektir\Billing\DTO\Item;
 use Ektir\Billing\Enums\DocumentType;
 use Ektir\Billing\Enums\PaymentMethod;
+use Ektir\Billing\Exceptions\InvalidBuilderStateException;
 use Ektir\Billing\Resources\Documents;
 
 /**
@@ -64,16 +65,16 @@ class PendingDocument
     public function toArray(): array
     {
         if (! $this->type) {
-            throw new \LogicException('Document type is required. Call receipt(), invoice() or creditNote().');
+            throw new InvalidBuilderStateException('Document type is required. Call receipt(), invoice() or creditNote().');
         }
         if (! $this->customer) {
-            throw new \LogicException('Customer is required. Call forCustomer($customer).');
+            throw new InvalidBuilderStateException('Customer is required. Call forCustomer($customer).');
         }
         if (empty($this->items)) {
-            throw new \LogicException('At least one item is required.');
+            throw new InvalidBuilderStateException('At least one item is required.');
         }
         if (! $this->paymentMethod) {
-            throw new \LogicException('Payment method is required.');
+            throw new InvalidBuilderStateException('Payment method is required.');
         }
 
         return array_filter([

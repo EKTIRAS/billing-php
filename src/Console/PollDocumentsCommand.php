@@ -36,6 +36,7 @@ class PollDocumentsCommand extends Command
             $id = (int) $entry['id'];
             $previous = $entry['previous_status'] ?? null;
             $previousStatus = $previous ? MyDataStatus::tryFrom($previous) : null;
+            $previousHasPdf = (bool) ($entry['previous_has_pdf'] ?? false);
 
             try {
                 $doc = $billing->documents()->find($id);
@@ -54,7 +55,10 @@ class PollDocumentsCommand extends Command
                 Event::dispatch(new DocumentSubmitted($doc));
             }
 
-            if ($doc->hasPdf() && $previousStatus !== MyDataStatus::Submitted) {
+            // Fire PdfReady exactly once — when the PDF transitions from
+            // absent to present, regardless of whether the mydata status
+            // moved on the same poll or an earlier one.
+            if ($doc->hasPdf() && ! $previousHasPdf) {
                 Event::dispatch(new DocumentPdfReady($doc));
             }
 

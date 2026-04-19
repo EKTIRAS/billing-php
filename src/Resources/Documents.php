@@ -4,6 +4,7 @@ namespace Ektir\Billing\Resources;
 
 use Ektir\Billing\DTO\Document;
 use Ektir\Billing\Enums\MyDataStatus;
+use Ektir\Billing\Exceptions\RateLimitException;
 use Ektir\Billing\Exceptions\TimeoutException;
 use Ektir\Billing\Http\Client;
 use Ektir\Billing\Support\PendingDocument;
@@ -68,7 +69,7 @@ class Documents
         $until ??= fn (Document $d) => $d->myDataStatus->isFinal();
 
         $deadline = microtime(true) + $timeoutSeconds;
-        $doc = $this->find($id);
+        $doc = $this->findWithRetry($id, $deadline, $pollIntervalMs);
 
         while (! $until($doc)) {
             if (microtime(true) >= $deadline) {
@@ -78,10 +79,29 @@ class Documents
                 );
             }
             usleep($pollIntervalMs * 1000);
-            $doc = $this->find($id);
+            $doc = $this->findWithRetry($id, $deadline, $pollIntervalMs);
         }
 
         return $doc;
+    }
+
+    /**
+     * find() wrapper that absorbs transient errors during await() loops.
+     * Propagates anything non-transient (validation, not-found, etc.).
+     */
+    private function findWithRetry(int $id, float $deadline, int $pollIntervalMs): Document
+    {
+        $backoffMs = $pollIntervalMs * 2;
+        while (true) {
+            try {
+                return $this->find($id);
+            } catch (RateLimitException|TimeoutException $e) {
+                if (microtime(true) + ($backoffMs / 1000) >= $deadline) {
+                    throw $e;
+                }
+                usleep($backoffMs * 1000);
+            }
+        }
     }
 
     /** Shorthand: await PDF availability. */
@@ -147,7 +167,8 @@ class Documents
         }
 
         $bytes = $this->client->stream($doc->pdfUrl);
-        $filename = trim($path, '/').'/'.preg_replace('/[^A-Za-z0-9_.-]/', '_', $doc->fullNumber).'.pdf';
+        $safeName = preg_replace('/[^\p{L}\p{N}_.-]/u', '_', $doc->fullNumber);
+        $filename = trim($path, '/').'/'.$safeName.'.pdf';
         Storage::disk($disk)->put($filename, $bytes);
 
         return $filename;

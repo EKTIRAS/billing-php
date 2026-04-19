@@ -17,14 +17,15 @@ class EktirBillingServiceProvider extends ServiceProvider implements DeferrableP
         $this->mergeConfigFrom(__DIR__.'/../config/billing.php', 'billing');
 
         $this->app->singleton(Client::class, function ($app) {
-            $config = $app['config']->get('billing');
+            $config = (array) $app['config']->get('billing', []);
+            $retry = (array) ($config['retry'] ?? []);
 
             return new Client(
-                baseUrl: rtrim($config['base_url'], '/'),
-                apiKey: $config['api_key'] ?? '',
-                timeout: (int) $config['timeout'],
-                retryTimes: (int) $config['retry']['times'],
-                retrySleepMs: (int) $config['retry']['sleep_ms'],
+                baseUrl: rtrim((string) ($config['base_url'] ?? 'https://billing.ektir.gr/api/v1'), '/'),
+                apiKey: (string) ($config['api_key'] ?? ''),
+                timeout: (int) ($config['timeout'] ?? 15),
+                retryTimes: (int) ($retry['times'] ?? 2),
+                retrySleepMs: (int) ($retry['sleep_ms'] ?? 400),
             );
         });
 
