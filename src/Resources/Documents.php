@@ -7,6 +7,7 @@ use Ektir\Billing\Enums\MyDataStatus;
 use Ektir\Billing\Exceptions\TimeoutException;
 use Ektir\Billing\Http\Client;
 use Ektir\Billing\Support\PendingDocument;
+use Illuminate\Mail\Attachment;
 use Illuminate\Support\Facades\Storage;
 
 class Documents
@@ -104,6 +105,32 @@ class Documents
             throw new \RuntimeException("Document {$id} has no PDF yet. Use awaitPdf() first.");
         }
         return $this->client->stream($doc->pdfUrl);
+    }
+
+    /**
+     * Return a freshly-signed PDF URL (valid 24h from now). Null if the
+     * document has no PDF yet. Share this link with your customer, put it
+     * in an email template, stick it in a CRM — whatever.
+     */
+    public function pdfUrl(int $id): ?string
+    {
+        return $this->find($id)->pdfUrl;
+    }
+
+    /**
+     * Build a Laravel Mail Attachment ready to drop into your own Mailable:
+     *
+     *     public function attachments(): array
+     *     {
+     *         return [Billing::documents()->pdfAttachment($this->doc->id)];
+     *     }
+     *
+     * The bytes are fetched lazily (when Laravel renders the mail), not now.
+     */
+    public function pdfAttachment(int $id, ?string $filename = null): Attachment
+    {
+        return Attachment::fromData(fn () => $this->pdfBytes($id), $filename ?? "document-{$id}.pdf")
+            ->withMime('application/pdf');
     }
 
     /**

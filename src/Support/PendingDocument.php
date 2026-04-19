@@ -12,13 +12,16 @@ use Ektir\Billing\Resources\Documents;
 /**
  * Fluent builder for issuing a document.
  *
- * $doc = Billing::documents()
- *     ->forCustomer($customer)
+ * $doc = Billing::documents()->build()
  *     ->receipt()
- *     ->payCard()
+ *     ->forCustomer($customer)
  *     ->addItem('SKU-1', 2, 10.00)
- *     ->sendEmail()
+ *     ->payCard()
  *     ->create();
+ *
+ * The integrator is responsible for delivering the PDF to their customer.
+ * Use Billing::documents()->pdfUrl($id) for a shareable signed link or
+ * Billing::documents()->pdfAttachment($id) to drop it into your own Mailable.
  */
 class PendingDocument
 {
@@ -27,7 +30,6 @@ class PendingDocument
     protected array $items = [];
     protected ?PaymentMethod $paymentMethod = null;
     protected ?int $paymentTermsDays = null;
-    protected bool $sendEmail = false;
     protected ?string $notes = null;
 
     public function __construct(protected Documents $documents) {}
@@ -57,7 +59,6 @@ class PendingDocument
     public function payWith(PaymentMethod $method): self { $this->paymentMethod = $method; return $this; }
 
     public function paymentTermsDays(int $days): self { $this->paymentTermsDays = $days; return $this; }
-    public function sendEmail(bool $value = true): self { $this->sendEmail = $value; return $this; }
     public function withNotes(string $notes): self { $this->notes = $notes; return $this; }
 
     public function toArray(): array
@@ -81,7 +82,6 @@ class PendingDocument
             'items' => array_map(fn (Item $i) => $i->toArray(), $this->items),
             'payment_method' => $this->paymentMethod->value,
             'payment_terms_days' => $this->paymentTermsDays,
-            'send_email' => $this->sendEmail,
             'notes' => $this->notes,
         ], fn ($v) => $v !== null);
     }

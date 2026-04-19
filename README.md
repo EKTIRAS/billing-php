@@ -101,25 +101,39 @@ $customer = new Customer(
     name: 'Anna Papadopoulou',
 );
 
-$doc = Billing::documents()
-    ->build()
+$doc = Billing::documents()->build()
     ->receipt()
     ->forCustomer($customer)
     ->addItem('SKU-BOOK-01', 1, 19.90)
     ->payCard()
-    ->sendEmail()
     ->create();
 
 // $doc->id, ->fullNumber, ->totalAmount are populated immediately
 // ->mark, ->pdfUrl are null until the async pipeline finishes (see §5)
 ```
 
-Block until the PDF is ready, then save it to S3:
+**The SDK does not send email on your behalf.** Fetch the PDF when it's
+ready and mail it from your own app — that way the message comes from
+your domain, with your branding, via your deliverability stack.
 
 ```php
+// Block until ready (OK for sync flows / queued jobs):
 $ready = Billing::documents()->awaitPdf($doc->id, timeoutSeconds: 120);
-$path  = Billing::documents()->downloadPdf($ready->id, disk: 's3');
+
+// Option A — share a link (valid 24h):
+$link = Billing::documents()->pdfUrl($ready->id);
+Mail::to($customer->email)->send(new InvoiceReadyMail($doc, $link));
+
+// Option B — attach the bytes to your own Mailable:
+// (inside your Mailable->attachments())
+return [Billing::documents()->pdfAttachment($ready->id, 'invoice.pdf')];
+
+// Option C — download and keep a copy:
+$path = Billing::documents()->downloadPdf($ready->id, disk: 's3');
 ```
+
+For async flows (issue now, mail later when the pipeline finishes)
+listen to the `DocumentPdfReady` event — see §11.
 
 ---
 
@@ -229,10 +243,10 @@ $doc = Billing::documents()->build()
 
 ---
 
-## 5. The async pipeline: myDATA → PDF → email
+## 5. The async pipeline: myDATA → PDF
 
 When `POST /documents` returns **201**, the document exists in the database
-but **nothing has been sent to myDATA or rendered** yet. Three queued jobs
+but **nothing has been sent to myDATA or rendered** yet. Two queued jobs
 run in sequence server‑side:
 
 ```
@@ -241,10 +255,11 @@ POST /documents → 201 (status=pending, mark=null, pdf_url=null)
        ├─► SubmitToMyData   → status becomes "submitted" (or "failed"/"offline"),
        │                       mark/uid/qr_url populated
        │
-       ├─► GenerateDocumentPdf → pdf_url populated (signed 24h URL)
-       │
-       └─► SendDocumentEmail (only if send_email=true) → email delivered
+       └─► GenerateDocumentPdf → pdf_url populated (signed 24h URL)
 ```
+
+Delivery to the customer is **your job** — the billing server deliberately
+doesn't send email on your behalf. See §6 and §11 for patterns.
 
 **Retry policy** (server‑side):
 
@@ -252,7 +267,6 @@ POST /documents → 201 (status=pending, mark=null, pdf_url=null)
 |-------------------|----------|----------------------------|
 | SubmitToMyData    | 4        | 60s, 5m, 15m, 1h           |
 | GenerateDocumentPdf | 2      | default                    |
-| SendDocumentEmail | 2        | 60s                        |
 
 So the worst realistic case for a pending document to reach `submitted` is
 about 80 minutes. Pending docs older than that are almost certainly stuck —
@@ -303,7 +317,66 @@ $path = Billing::documents()->downloadPdf(
 Unsafe characters in `full_number` (Greek letters, slashes) are sanitised
 into the filename.
 
-### 6.3 Stream the PDF back to a user's browser
+### 6.3 Email the PDF from your own Mailable
+
+The billing server deliberately does **not** send email to your customers.
+You're expected to send the message yourself so it comes from your domain,
+with your branding, via your mail provider. The SDK gives you two one-liners
+for this.
+
+**Attach the PDF to a Laravel Mailable.** `pdfAttachment()` returns an
+`Illuminate\Mail\Attachment` that fetches bytes lazily (only when Laravel
+renders the mail), so it's cheap to build:
+
+```php
+use Ektir\Billing\DTO\Document;
+use Ektir\Billing\Facades\EktirBilling as Billing;
+use Illuminate\Mail\Mailables\Content;
+use Illuminate\Mail\Mailables\Envelope;
+
+class InvoiceIssuedMail extends \Illuminate\Mail\Mailable
+{
+    public function __construct(public Document $doc) {}
+
+    public function envelope(): Envelope
+    {
+        return new Envelope(subject: "Your receipt {$this->doc->fullNumber}");
+    }
+
+    public function content(): Content
+    {
+        return new Content(view: 'mail.invoice-issued', with: ['doc' => $this->doc]);
+    }
+
+    public function attachments(): array
+    {
+        return [
+            Billing::documents()->pdfAttachment(
+                $this->doc->id,
+                filename: "{$this->doc->fullNumber}.pdf",
+            ),
+        ];
+    }
+}
+
+// …somewhere in your app:
+Mail::to($customer->email)->send(new InvoiceIssuedMail($doc));
+```
+
+**Or just send a link.** `pdfUrl()` returns a freshly-signed 24h URL —
+stick it in your email body and skip the attachment entirely:
+
+```php
+$link = Billing::documents()->pdfUrl($doc->id);
+
+Mail::to($customer->email)->send(new InvoiceIssuedMail($doc, $link));
+```
+
+The signed URL expires in 24 h; if you need a durable link, proxy it
+through a route in your own app (see §6.4) and issue fresh signatures
+on demand.
+
+### 6.4 Stream the PDF back to a user's browser
 
 Do **not** send the EKTIR URL to the browser directly — it expires in 24h
 and re‑generating it on the server is cheap. Proxy it through your own
@@ -321,7 +394,7 @@ Route::get('/invoices/{id}/pdf', function (int $id) {
 })->middleware(['auth']);
 ```
 
-### 6.4 What if the PDF never arrives?
+### 6.5 What if the PDF never arrives?
 
 Documents stuck in `pending` past the max retry window (about 80 minutes)
 get moved to `failed` or `offline` by the server. `awaitPdf()` treats
@@ -548,9 +621,11 @@ Event::listen(DocumentSubmitted::class, function (DocumentSubmitted $e) {
 });
 
 Event::listen(DocumentPdfReady::class, function (DocumentPdfReady $e) {
-    // Push to S3, email the customer, notify Slack, etc.
+    // The PDF is ready. Send the email from YOUR server, branded as YOUR
+    // company — use pdfAttachment() or pdfUrl() (see §6.3) inside your own
+    // Mailable.
     Mail::to($e->document->raw['customer']['email'] ?? '')
-        ->send(new InvoiceReadyMail($e->document));
+        ->send(new \App\Mail\InvoiceIssuedMail($e->document));
 });
 
 Event::listen(DocumentFailed::class, function (DocumentFailed $e) {
@@ -766,7 +841,6 @@ are under `/api/v1`. All requests take `Authorization: Bearer <key>` and
   ],
   "payment_method":     "card | transfer | cash",
   "payment_terms_days": 30,
-  "send_email":         true,
   "notes":              "string?"
 }
 ```
