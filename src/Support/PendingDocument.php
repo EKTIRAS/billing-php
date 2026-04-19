@@ -27,40 +27,109 @@ use Ektir\Billing\Resources\Documents;
 class PendingDocument
 {
     protected ?DocumentType $type = null;
+
     protected ?Customer $customer = null;
+
     protected array $items = [];
+
     protected ?PaymentMethod $paymentMethod = null;
+
     protected ?int $paymentTermsDays = null;
+
     protected ?string $notes = null;
 
     public function __construct(protected Documents $documents) {}
 
-    public function receipt(): self { $this->type = DocumentType::Receipt; return $this; }
-    public function invoice(): self { $this->type = DocumentType::Invoice; return $this; }
-    public function creditNote(): self { $this->type = DocumentType::CreditNote; return $this; }
-    public function of(DocumentType $type): self { $this->type = $type; return $this; }
+    public function receipt(): self
+    {
+        $this->type = DocumentType::Receipt;
 
-    public function forCustomer(Customer $customer): self { $this->customer = $customer; return $this; }
+        return $this;
+    }
+
+    public function invoice(): self
+    {
+        $this->type = DocumentType::Invoice;
+
+        return $this;
+    }
+
+    public function creditNote(): self
+    {
+        $this->type = DocumentType::CreditNote;
+
+        return $this;
+    }
+
+    public function of(DocumentType $type): self
+    {
+        $this->type = $type;
+
+        return $this;
+    }
+
+    public function forCustomer(Customer $customer): self
+    {
+        $this->customer = $customer;
+
+        return $this;
+    }
 
     public function addItem(string $productCode, float $quantity, float $unitPrice): self
     {
         $this->items[] = new Item($productCode, $quantity, $unitPrice);
+
         return $this;
     }
 
     public function addItems(Item ...$items): self
     {
         array_push($this->items, ...$items);
+
         return $this;
     }
 
-    public function payCard(): self { $this->paymentMethod = PaymentMethod::Card; return $this; }
-    public function payTransfer(): self { $this->paymentMethod = PaymentMethod::Transfer; return $this; }
-    public function payCash(): self { $this->paymentMethod = PaymentMethod::Cash; return $this; }
-    public function payWith(PaymentMethod $method): self { $this->paymentMethod = $method; return $this; }
+    public function payCard(): self
+    {
+        $this->paymentMethod = PaymentMethod::Card;
 
-    public function paymentTermsDays(int $days): self { $this->paymentTermsDays = $days; return $this; }
-    public function withNotes(string $notes): self { $this->notes = $notes; return $this; }
+        return $this;
+    }
+
+    public function payTransfer(): self
+    {
+        $this->paymentMethod = PaymentMethod::Transfer;
+
+        return $this;
+    }
+
+    public function payCash(): self
+    {
+        $this->paymentMethod = PaymentMethod::Cash;
+
+        return $this;
+    }
+
+    public function payWith(PaymentMethod $method): self
+    {
+        $this->paymentMethod = $method;
+
+        return $this;
+    }
+
+    public function paymentTermsDays(int $days): self
+    {
+        $this->paymentTermsDays = $days;
+
+        return $this;
+    }
+
+    public function withNotes(string $notes): self
+    {
+        $this->notes = $notes;
+
+        return $this;
+    }
 
     public function toArray(): array
     {

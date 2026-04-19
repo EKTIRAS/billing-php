@@ -3,10 +3,10 @@
 namespace Ektir\Billing\Tests;
 
 use Ektir\Billing\DTO\Customer;
-use Ektir\Billing\DTO\Document;
 use Ektir\Billing\Enums\MyDataStatus;
 use Ektir\Billing\Enums\VatType;
 use Ektir\Billing\Exceptions\InvalidBuilderStateException;
+use Ektir\Billing\Exceptions\TimeoutException;
 use Ektir\Billing\Exceptions\UnknownEnumValueException;
 use Ektir\Billing\Exceptions\ValidationException;
 use Ektir\Billing\Facades\EktirBilling as Billing;
@@ -35,6 +35,7 @@ class DocumentsTest extends TestCase
 
         Http::assertSent(function ($req) {
             $body = $req->data();
+
             return $req->hasHeader('Authorization', 'Bearer test-key')
                 && $body['customer']['country'] === 'GR'    // upper-cased by DTO
                 && $body['document_type'] === 'receipt'
@@ -105,6 +106,7 @@ class DocumentsTest extends TestCase
             if ($req->url() !== 'https://cdn.example.test/signed/abc.pdf') {
                 return true; // only interested in the PDF request
             }
+
             return ! $req->hasHeader('Authorization');
         });
     }
@@ -180,11 +182,86 @@ class DocumentsTest extends TestCase
         try {
             Billing::documents()->await(1, timeoutSeconds: 1, pollIntervalMs: 50);
             $this->fail('Expected TimeoutException');
-        } catch (\Ektir\Billing\Exceptions\TimeoutException $e) {
+        } catch (TimeoutException $e) {
             $elapsed = microtime(true) - $start;
             $this->assertGreaterThanOrEqual(1.0, $elapsed);
             $this->assertSame(408, $e->status);
         }
+    }
+
+    public function test_document_exposes_line_items_when_returned(): void
+    {
+        // B2: the API's GET /documents/{id} now includes an items array.
+        Http::fake([
+            'https://billing.test/api/v1/documents/1' => Http::response([
+                ...$this->documentFixture(status: 'submitted', mark: 'M1'),
+                'items' => [
+                    [
+                        'product_code' => 'SKU-BOOK',
+                        'description_el' => 'Βιβλίο',
+                        'description_en' => 'Book',
+                        'item_type' => 'goods',
+                        'quantity' => 2,
+                        'unit_price' => 19.9,
+                        'vat_rate' => 24,
+                        'net_total' => 39.8,
+                        'vat_total' => 9.55,
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $doc = Billing::documents()->find(1);
+
+        $this->assertCount(1, $doc->items);
+        $this->assertSame('SKU-BOOK', $doc->items[0]->productCode);
+        $this->assertSame(2.0, $doc->items[0]->quantity);
+        $this->assertSame('goods', $doc->items[0]->itemType);
+    }
+
+    public function test_products_list_sends_include_inactive_when_requested(): void
+    {
+        Http::fake(['https://billing.test/api/v1/products*' => Http::response(['data' => []], 200)]);
+
+        Billing::products()->list();
+        Http::assertSent(fn ($req) => ! str_contains($req->url(), 'include_inactive'));
+
+        Billing::products()->list(includeInactive: true);
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'include_inactive=1'));
+    }
+
+    public function test_stats_monthly_parses_dto(): void
+    {
+        Http::fake([
+            'https://billing.test/api/v1/stats/monthly*' => Http::response([
+                'months' => ['2026-01', '2026-02'],
+                'by_source' => ['vanta' => [100, 50]],
+                'totals_by_source' => ['vanta' => 150],
+                'grand_total' => 150,
+            ], 200),
+        ]);
+
+        $stats = Billing::stats()->monthly(months: 2);
+
+        $this->assertCount(2, $stats->months);
+        $this->assertSame(150.0, $stats->grandTotal);
+        $this->assertSame([100.0, 50.0], $stats->bySource['vanta']);
+    }
+
+    public function test_regenerate_pdf_posts_and_returns_document(): void
+    {
+        Http::fake([
+            'https://billing.test/api/v1/documents/1/regenerate-pdf' => Http::response(
+                $this->documentFixture(status: 'submitted', mark: 'M1'),
+                202,
+            ),
+        ]);
+
+        $doc = Billing::documents()->regeneratePdf(1);
+
+        $this->assertSame(1, $doc->id);
+        Http::assertSent(fn ($req) => $req->method() === 'POST'
+            && str_ends_with($req->url(), '/documents/1/regenerate-pdf'));
     }
 
     protected function documentFixture(

@@ -419,17 +419,27 @@ $doc = Billing::documents()->await(
 
 ```php
 $page = Billing::documents()->list([
-    'type'     => 'invoice',
-    'status'   => 'submitted',
-    'country'  => 'DE',
-    'from'     => '2026-01-01',
-    'to'       => '2026-03-31',
-    'page'     => 1,
-    'per_page' => 50,   // max 100
+    'type'             => 'invoice',
+    'status'           => 'submitted',
+    'country'          => 'DE',
+    'from'             => '2026-01-01',
+    'to'               => '2026-03-31',
+    'mark'             => '400009999',         // exact match
+    'full_number'      => 'Α/2026',             // partial match
+    'customer_email'   => 'acme',              // partial match
+    'customer_company' => 'Acme',              // partial match
+    'source'           => 'web_shop',          // exact match
+    'page'             => 1,
+    'per_page'         => 50,                   // max 100
 ]);
 
 foreach ($page['data'] as $doc) {
     echo $doc->fullNumber.' → '.$doc->totalAmount.' EUR'.PHP_EOL;
+
+    // Line items are included on GET — handy for reconciliation
+    foreach ($doc->items as $item) {
+        echo "  {$item->quantity}× {$item->productCode} @ {$item->unitPrice}".PHP_EOL;
+    }
 }
 
 $meta = $page['meta'];  // current_page, last_page, total, ...
@@ -461,6 +471,24 @@ $creditNote = Billing::documents()->find($result['credit_note_id']);
 has no ΜΑΡΚ yet (still pending submission), is already cancelled, or
 myDATA rejected the cancellation.
 
+### 8.1 Regenerating a PDF
+
+If the stored PDF is stale (you tweaked the template, the QR rendering
+got upgraded, the original generation was flaky) call
+`regeneratePdf()` to force the server to re-render. The server nulls
+`pdf_path`, deletes the existing PDF from disk, and re-dispatches the
+generation job:
+
+```php
+$doc = Billing::documents()->regeneratePdf(123);
+// $doc->pdfUrl === null  — job is queued; poll or await as usual
+$ready = Billing::documents()->awaitPdf(123);
+```
+
+Only allowed for `submitted` documents. Calling on `pending` / `failed` /
+`offline` returns 422 — there's no legally-valid PDF to regenerate for
+those states.
+
 ---
 
 ## 9. Products — create, update, toggle
@@ -491,11 +519,16 @@ $updated = Billing::products()->update($product->id, [
 $toggled = Billing::products()->toggle($product->id);   // active ↔ inactive
 ```
 
-Listing returns only **active** products by default:
+Listing returns only **active** products by default; pass
+`includeInactive: true` to see disabled ones (useful for admin UIs):
 
 ```php
 foreach (Billing::products()->list() as $p) {
     echo "{$p->code}: {$p->nameEn} ({$p->vatRate}%)".PHP_EOL;
+}
+
+foreach (Billing::products()->list(includeInactive: true) as $p) {
+    echo ($p->active ? '[ON] ' : '[OFF] ').$p->code.PHP_EOL;
 }
 ```
 
@@ -526,6 +559,21 @@ foreach ($stats->breakdownByCountry as $iso => $net) {
 Surface this in your dashboard to let the accountant pre‑empt the threshold
 flip (which switches from 24 % Greek VAT to the destination country's rate
 for every new EU B2C sale).
+
+### 10.1 Monthly revenue by source
+
+`stats()->monthly()` returns the same data the web dashboard chart uses —
+12 months trailing by default, broken down by source code:
+
+```php
+$m = Billing::stats()->monthly();       // last 12 months
+$m = Billing::stats()->monthly(months: 24);   // last 24 months (max 36)
+
+$m->months;              // ['2025-05', '2025-06', …, '2026-04']  (oldest→newest)
+$m->bySource;            // ['web_shop' => [0, 120, 340, …], 'pos' => [..]]
+$m->totalsBySource;      // ['web_shop' => 4123.50, 'pos' => 888.00]
+$m->grandTotal;          // 5011.50
+```
 
 ---
 
@@ -816,11 +864,18 @@ are under `/api/v1`. All requests take `Authorization: Bearer <key>` and
 | GET    | `/documents`                        | `documents()->list($filters)`                  |
 | GET    | `/documents/{id}`                   | `documents()->find($id)`                       |
 | POST   | `/documents/{id}/cancel`            | `documents()->cancel($id, $reason)`            |
+| POST   | `/documents/{id}/regenerate-pdf`    | `documents()->regeneratePdf($id)`              |
 | GET    | `/stats/eu-total`                   | `stats()->euTotal($year)`                      |
-| GET    | `/products`                         | `products()->list()`                           |
+| GET    | `/stats/monthly`                    | `stats()->monthly($months)`                    |
+| GET    | `/products` (`?include_inactive=1`) | `products()->list($includeInactive)`           |
 | POST   | `/products`                         | `products()->create($body)`                    |
 | PATCH  | `/products/{id}`                    | `products()->update($id, $body)`               |
 | POST   | `/products/{id}/toggle`             | `products()->toggle($id)`                      |
+
+> **Note on `send_email`**: passing this field to `POST /documents`
+> now returns **422** with a helpful message — the server does not
+> send email to end customers. See §6.3 for the integrator-owned
+> email pattern.
 
 **POST /documents** body:
 
@@ -866,7 +921,20 @@ are under `/api/v1`. All requests take `Authorization: Bearer <key>` and
   "currency": "EUR",
   "mydata_status": "submitted",
   "mydata_environment": "prod",
-  "issued_at": "2026-04-19T12:34:56+02:00"
+  "issued_at": "2026-04-19T12:34:56+02:00",
+  "items": [
+    {
+      "product_code": "SKU-BOOK",
+      "description_el": "Βιβλίο",
+      "description_en": "Book",
+      "item_type": "goods",
+      "quantity": 2.0,
+      "unit_price": 19.90,
+      "vat_rate": 24.0,
+      "net_total": 39.80,
+      "vat_total": 9.55
+    }
+  ]
 }
 ```
 

@@ -23,12 +23,14 @@ class Documents
     public function create(array $payload): Document
     {
         $body = $this->client->post('documents', $payload);
+
         return Document::fromArray($body);
     }
 
     public function find(int $id): Document
     {
         $body = $this->client->get("documents/{$id}");
+
         return Document::fromArray($body);
     }
 
@@ -52,11 +54,26 @@ class Documents
     }
 
     /**
+     * Re-render the PDF for a document. The server nulls pdf_path, deletes
+     * the old PDF from disk and re-dispatches GenerateDocumentPdf. Returns
+     * the document in its transitional (pending-pdf) state.
+     *
+     * Only allowed for submitted documents — the server returns 422
+     * (ValidationException) otherwise.
+     */
+    public function regeneratePdf(int $id): Document
+    {
+        $body = $this->client->post("documents/{$id}/regenerate-pdf");
+
+        return Document::fromArray($body);
+    }
+
+    /**
      * Block until the document reaches a final state (submitted|failed) or
      * a condition is met — useful in scripts, CLI commands, or queued jobs.
      *
      * @param  callable(Document): bool  $until  callback returning true when done.
-     *                                            Default: wait until myDATA is final.
+     *                                           Default: wait until myDATA is final.
      * @param  int  $timeoutSeconds  overall timeout
      * @param  int  $pollIntervalMs  delay between polls
      */
@@ -124,6 +141,7 @@ class Documents
         if (! $doc->hasPdf()) {
             throw new \RuntimeException("Document {$id} has no PDF yet. Use awaitPdf() first.");
         }
+
         return $this->client->stream($doc->pdfUrl);
     }
 

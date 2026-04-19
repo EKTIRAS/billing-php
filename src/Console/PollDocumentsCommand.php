@@ -17,12 +17,14 @@ use Illuminate\Support\Facades\Event;
 class PollDocumentsCommand extends Command
 {
     protected $signature = 'ektir:poll-documents {--limit= : Override the config batch size}';
+
     protected $description = 'Fetch pending EKTIR Billing documents and fire local events when state changes (webhook replacement).';
 
     public function handle(EktirBilling $billing, DocumentTracker $tracker): int
     {
         if ($tracker instanceof NullTracker) {
             $this->warn('No DocumentTracker is bound. See Ektir\\Billing\\Support\\DocumentTracker — bind an implementation in a service provider.');
+
             return self::SUCCESS;
         }
 
@@ -42,6 +44,7 @@ class PollDocumentsCommand extends Command
                 $doc = $billing->documents()->find($id);
             } catch (EktirBillingException $e) {
                 $this->warn("Skipping document {$id}: {$e->getMessage()}");
+
                 continue;
             }
 

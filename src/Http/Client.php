@@ -90,6 +90,7 @@ class Client
         }
 
         $json = $response->json();
+
         return is_array($json) ? $json : [];
     }
 
