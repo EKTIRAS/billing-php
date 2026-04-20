@@ -6,6 +6,8 @@ use Ektir\Billing\Http\Client;
 use Ektir\Billing\Resources\Documents;
 use Ektir\Billing\Resources\Products;
 use Ektir\Billing\Resources\Stats;
+use Ektir\Billing\Resources\System;
+use Ektir\Billing\Resources\Webhooks;
 
 class EktirBilling
 {
@@ -14,6 +16,10 @@ class EktirBilling
     protected ?Products $products = null;
 
     protected ?Stats $stats = null;
+
+    protected ?Webhooks $webhooks = null;
+
+    protected ?System $system = null;
 
     public function __construct(protected Client $client) {}
 
@@ -30,6 +36,16 @@ class EktirBilling
     public function stats(): Stats
     {
         return $this->stats ??= new Stats($this->client);
+    }
+
+    public function webhooks(): Webhooks
+    {
+        return $this->webhooks ??= new Webhooks($this->client);
+    }
+
+    public function system(): System
+    {
+        return $this->system ??= new System($this->client);
     }
 
     public function client(): Client

@@ -42,6 +42,11 @@ class Client
         return $this->send('PATCH', $path, body: $body);
     }
 
+    public function delete(string $path): void
+    {
+        $this->send('DELETE', $path);
+    }
+
     /**
      * Download an arbitrary (typically signed) URL without sending the API
      * Bearer token. Used for PDF fetches — the signed URL carries its own
@@ -79,6 +84,7 @@ class Client
                 'GET' => $request->get($this->url($path), $query),
                 'POST' => $request->post($this->url($path), $body),
                 'PATCH' => $request->patch($this->url($path), $body),
+                'DELETE' => $request->delete($this->url($path)),
                 default => throw new EktirBillingException("Unsupported method {$method}."),
             };
         } catch (ConnectionException $e) {

@@ -9,6 +9,25 @@ await PDFs, and react to document state changes through Laravel events.
 - Async‑aware: ships a poller + events so your code reacts when myDATA
   submission completes and the PDF becomes downloadable.
 
+### What's new in v0.4.0
+
+- **Real server webhooks** — `Billing::webhooks()->create([...])` + HMAC-SHA256
+  signature verification helper. Replaces the polling fallback for apps
+  that can receive inbound HTTP. See [§11](#11-webhooks).
+- **Sandbox / test-mode keys** — issue a key with `--mode=test` to exercise
+  the full issuance / webhook / PDF pipeline without filing real invoices
+  with myDATA. Every response carries `X-Ektir-Mode`.
+- **`products()->delete($id)`** — hard-delete; catches `ProductReferencedException`
+  (409) when items still reference the product, so you can fall back to
+  `toggle()`.
+- **System endpoints** — `Billing::system()->health()`, `->info()`, `->me()`
+  for uptime monitoring, version discovery, and reading your own
+  rate-limit counters.
+- **OpenAPI 3.1 spec** served at `/docs/api.json` (+ a rendered viewer at
+  `/docs/api`). Use it to generate clients in JS/Python/Go.
+
+Full details in [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Contents
@@ -21,9 +40,9 @@ await PDFs, and react to document state changes through Laravel events.
 6. [PDFs — awaiting, downloading, storing](#6-pdfs--awaiting-downloading-storing)
 7. [Listing & filtering documents](#7-listing--filtering-documents)
 8. [Cancelling (and the auto credit note)](#8-cancelling-and-the-auto-credit-note)
-9. [Products — create, update, toggle](#9-products--create-update-toggle)
+9. [Products — create, update, toggle, delete](#9-products--create-update-toggle-delete)
 10. [EU OSS stats](#10-eu-oss-stats)
-11. [Webhooks (there aren't any — here's the replacement)](#11-webhooks-there-arent-any--heres-the-replacement)
+11. [Webhooks](#11-webhooks)
 12. [Middleware patterns](#12-middleware-patterns)
 13. [Error handling](#13-error-handling)
 14. [Rate limits & retries](#14-rate-limits--retries)
@@ -44,7 +63,7 @@ Add the VCS repository to your app's `composer.json`:
     { "type": "vcs", "url": "https://github.com/EKTIRAS/billing-php" }
   ],
   "require": {
-    "ektiras/billing-php": "^0.1"
+    "ektiras/billing-php": "^0.4"
   }
 }
 ```
@@ -491,7 +510,7 @@ those states.
 
 ---
 
-## 9. Products — create, update, toggle
+## 9. Products — create, update, toggle, delete
 
 Products are the catalogue your line items reference via `product_code`.
 The server validates that each `product_code` in a document's items exists
@@ -517,6 +536,23 @@ $updated = Billing::products()->update($product->id, [
 ]);
 
 $toggled = Billing::products()->toggle($product->id);   // active ↔ inactive
+```
+
+Hard-delete a product that has never been used in any document:
+
+```php
+use Ektir\Billing\Exceptions\ProductReferencedException;
+
+try {
+    Billing::products()->delete($product->id);
+} catch (ProductReferencedException $e) {
+    // 409 — existing line items still reference this product.
+    // Existing receipts must keep their product relation intact (Greek
+    // tax law N.4308/2014: line items are append-only). Deactivate
+    // instead of deleting:
+    Billing::products()->toggle($product->id);
+    Log::info("Deactivated {$product->code}: {$e->referencedBy()} docs use it.");
+}
 ```
 
 Listing returns only **active** products by default; pass
@@ -577,15 +613,106 @@ $m->grandTotal;          // 5011.50
 
 ---
 
-## 11. Webhooks (there aren't any — here's the replacement)
+## 11. Webhooks
 
-The EKTIR Billing API does **not** send webhooks. Document state transitions
-are server‑internal; clients are expected to poll.
+As of server v1.2 the EKTIR Billing API emits signed HTTP webhooks on
+document state transitions. If your app can receive inbound HTTP, this
+is the recommended path — see §11.0. The poller + events loop originally
+shipped in v0.1 still works and is still useful for environments that
+can't accept inbound HTTP (local dev, CI, background workers behind
+NAT) — see §11.1 onwards.
 
-This package ships a polling loop that **feels like webhooks to your code**:
-one artisan command + three Laravel events.
+### 11.0 Server-sent webhooks (recommended)
 
-### 11.1 Bind a tracker
+Create a subscription pointing at your ingestion URL. The server returns
+the HMAC secret **exactly once** on creation — store it in your config
+or secrets manager immediately.
+
+```php
+use Ektir\Billing\Facades\Billing;
+
+$sub = Billing::webhooks()->create([
+    'name'   => 'primary',
+    'url'    => route('ektir.webhook'),
+    'events' => [
+        'document.submitted',
+        'document.failed',
+        'document.cancelled',
+    ],
+]);
+
+Config::set('services.ektir.webhook_secret', $sub->secret); // store it now
+```
+
+Supported events:
+
+| Event                  | Fires when                                           |
+|------------------------|------------------------------------------------------|
+| `document.created`     | A document is persisted (before myDATA submission).  |
+| `document.submitted`   | myDATA accepted submission; `mark` is now populated. |
+| `document.failed`      | myDATA permanently rejected.                         |
+| `document.cancelled`   | Document was cancelled via `POST /documents/{id}/cancel`. |
+
+Use `['*']` to subscribe to every current and future event.
+
+Each delivery carries these headers:
+
+- `X-Ektir-Event: document.submitted`
+- `X-Ektir-Delivery: <uuid>`  — unique per attempt, idempotency key
+- `X-Ektir-Signature: sha256=<hex hmac>`
+
+The body shape:
+
+```json
+{
+  "id": "0x…-…-uuid",
+  "event": "document.submitted",
+  "mode": "live",
+  "created_at": "2026-04-20T12:34:56+00:00",
+  "data": { "document": { "id": 42, "full_number": "Β-00042", "...": "..." } }
+}
+```
+
+A Laravel ingestion endpoint using the bundled verifier:
+
+```php
+use Ektir\Billing\Security\WebhookSignature;
+
+Route::post('/ektir/webhook', function (Request $request) {
+    $ok = WebhookSignature::verify(
+        $request->getContent(),
+        $request->header('X-Ektir-Signature', ''),
+        config('services.ektir.webhook_secret'),
+    );
+    abort_if(! $ok, 400, 'invalid signature');
+
+    $event = $request->input('event');
+    $doc   = $request->input('data.document');
+
+    match ($event) {
+        'document.submitted' => SendReceiptJob::dispatch($doc),
+        'document.failed'    => AlertOpsJob::dispatch($doc),
+        'document.cancelled' => MarkOrderRefunded::dispatch($doc),
+        default              => null,
+    };
+
+    return response()->noContent();
+})->name('ektir.webhook');
+```
+
+The server treats any 2xx as success. Non-2xx responses are retried
+(5 attempts, exponential backoff: 30s → 2m → 10m → 30m → 1h). After
+10 consecutive failures the subscription is auto-disabled. Use
+`Billing::webhooks()->deliveries($id)` to inspect the last 50 delivery
+attempts; `Billing::webhooks()->rotate($id)` regenerates the secret if
+you suspect it leaked.
+
+**Test mode + webhooks:** subscriptions created with a test key only
+receive events for test-mode documents, and vice versa — so you can
+safely exercise your handler against fake documents without live
+traffic leaking in.
+
+### 11.1 Legacy fallback: the poller + `DocumentTracker`
 
 The poller needs to know which documents are still worth polling and how to
 persist updates. Create a small Eloquent-backed tracker in your app:
@@ -798,6 +925,25 @@ try {
 ---
 
 ## 15. Testing your integration
+
+### 15.0 Test-mode keys against a real server
+
+When you want to exercise the full issuance pipeline against a running
+billing server — myDATA calls skipped, PDFs watermarked, webhooks still
+firing — ask an operator to generate a sandbox key:
+
+```bash
+php artisan api-key:generate --company=42 --name="acme sandbox" --source=vanta --mode=test
+```
+
+Test keys have a `test_` segment in their plaintext, and every authed
+response includes `X-Ektir-Mode: test`. Documents created with a test
+key end up with `mark: "TEST-<random>"`, PDFs are watermarked
+"TEST MODE", and they never appear in live-key listings or stats. You
+can point webhook subscriptions at a test-mode ingestion URL (also
+created with the test key) to exercise your handlers end-to-end.
+
+### 15.1 Unit / CI without a live server
 
 The package uses Laravel's `Http` facade under the hood, so you can fake
 everything with `Http::fake(...)` in your tests without spinning up the
