@@ -4,6 +4,100 @@ All notable changes to `ektiras/billing-php` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-04-20
+
+Pairs with the billing server's **v1.2** release. Five additive capabilities;
+nothing from 0.3.x breaks.
+
+### Added
+
+- **Real server webhooks.** The server now emits signed outbound HTTP POSTs
+  on document state transitions — no more polling required. New SDK surface:
+  ```php
+  $sub = Billing::webhooks()->create([
+      'url'    => 'https://yourapp.test/ektir/hook',
+      'events' => ['document.submitted', 'document.failed', 'document.cancelled'],
+  ]);
+  // $sub->secret is returned ONCE — store it, you won't see it again.
+
+  Billing::webhooks()->list();
+  Billing::webhooks()->rotate($sub->id);     // new secret
+  Billing::webhooks()->deliveries($sub->id); // last 50 delivery attempts
+  Billing::webhooks()->delete($sub->id);
+  ```
+  Subscriber verification helper:
+  ```php
+  use Ektir\Billing\Security\WebhookSignature;
+  $ok = WebhookSignature::verify(
+      $request->getContent(),
+      $request->header('X-Ektir-Signature', ''),
+      config('services.ektir.webhook_secret'),
+  );
+  ```
+  Supported events: `document.created`, `document.submitted`,
+  `document.failed`, `document.cancelled`. Use `'*'` to subscribe to all.
+  Delivery headers: `X-Ektir-Event`, `X-Ektir-Signature` (HMAC-SHA256),
+  `X-Ektir-Delivery`. The poller + `DocumentTracker` flow shipped in v0.1
+  still works as a fallback for environments that can't receive inbound
+  HTTP.
+
+- **Sandbox / test-mode keys.** Issuing an API key with `--mode=test`
+  creates a sandbox key. Documents created with a test key:
+  - Are tagged `mode: test` in responses and webhook payloads.
+  - Skip the real myDATA submission (no risk of filing fake invoices with
+    the Greek tax authority) — `mark` comes back as `TEST-<random>`.
+  - Still fire `DocumentSubmitted` / `DocumentFailed` webhooks so you can
+    exercise your handlers end-to-end.
+  - Render PDFs with a "TEST MODE" watermark.
+  - Are scoped: test keys never see live documents and vice versa; EU
+    OSS stats are tallied per-mode so test invoices don't pollute the
+    threshold counter.
+  Every authed response now returns `X-Ektir-Mode: live|test` so the SDK
+  can sanity-check.
+
+- **`products()->delete($id)`.** Hard-deletes a product. If any existing
+  document line item references it, the server refuses with a 409 —
+  catchable as `ProductReferencedException`:
+  ```php
+  try {
+      Billing::products()->delete($product->id);
+  } catch (ProductReferencedException $e) {
+      // $e->referencedBy() → count of documents still linking to it.
+      // Fall back to toggle() to deactivate instead.
+      Billing::products()->toggle($product->id);
+  }
+  ```
+
+- **System endpoints.** Three new endpoints for ops / caller
+  introspection, all exposed as `Billing::system()`:
+  - `system()->health()` — `{status, db, time}` — unauthenticated, for
+    uptime monitors.
+  - `system()->info()` — `{version, api_version, supported_events,
+    docs_url}` — unauthenticated.
+  - `system()->me()` — `{api_key: {id, name, mode, source, ...},
+    company: {id, name, vat_number, country}, rate_limit: {limit,
+    remaining, resets_at}}`. Lets multi-tenant apps read rate-limit
+    state without waiting for a 429.
+
+- **OpenAPI 3.1 spec.** The server now publishes its own spec at
+  `/docs/api.json` (auto-generated from the Laravel routes) and a
+  rendered viewer at `/docs/api`. Use it to generate clients in other
+  languages or to document your integration.
+
+### Added (server-side, for context)
+
+- `DELETE /api/v1/products/{id}`
+- `GET /api/v1/webhooks`, `POST /api/v1/webhooks`,
+  `GET|PATCH|DELETE /api/v1/webhooks/{id}`,
+  `POST /api/v1/webhooks/{id}/rotate`,
+  `GET /api/v1/webhooks/{id}/deliveries`
+- `GET /api/v1/health`, `GET /api/v1/info`, `GET /api/v1/me`
+- Signed outbound webhook delivery with 5-try exponential backoff; auto-
+  disables a subscription after 10 consecutive failures.
+- `mode` column on `api_keys`, `documents`, `eu_sales_log`, and
+  `webhook_subscriptions` (backfilled to `live` for existing rows).
+- `X-Ektir-Mode` response header on every authenticated response.
+
 ## [0.3.0] — 2026-04-19
 
 Pairs with the server's API v1.1 release (same commit series in

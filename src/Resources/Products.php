@@ -34,4 +34,14 @@ class Products
     {
         return Product::fromArray($this->client->post("products/{$id}/toggle"));
     }
+
+    /**
+     * Hard-delete a product. Throws {@see \Ektir\Billing\Exceptions\ProductReferencedException}
+     * (HTTP 409) when any existing document line item references the product — in
+     * that case fall back to {@see self::toggle()} to deactivate it.
+     */
+    public function delete(int $id): void
+    {
+        $this->client->delete("products/{$id}");
+    }
 }

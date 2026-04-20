@@ -29,6 +29,7 @@ class EktirBillingException extends RuntimeException
             'not_found' => new NotFoundException($message, $status, $code, $details, $raw),
             'validation_failed' => new ValidationException($message, $status, $code, $details, $raw),
             'cancel_forbidden' => new CancelForbiddenException($message, $status, $code, $details, $raw),
+            'product_referenced' => new ProductReferencedException($message, $status, $code, $details, $raw),
             default => new self($message, $status, $code, $details, $raw),
         };
     }
