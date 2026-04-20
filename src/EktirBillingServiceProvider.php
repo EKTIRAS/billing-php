@@ -3,6 +3,7 @@
 namespace Ektir\Billing;
 
 use Ektir\Billing\Console\PollDocumentsCommand;
+use Ektir\Billing\Console\RegisterWebhookCommand;
 use Ektir\Billing\Http\Client;
 use Ektir\Billing\Support\DocumentTracker;
 use Ektir\Billing\Support\NullTracker;
@@ -48,7 +49,10 @@ class EktirBillingServiceProvider extends ServiceProvider implements DeferrableP
                 __DIR__.'/../config/billing.php' => config_path('billing.php'),
             ], 'ektir-billing-config');
 
-            $this->commands([PollDocumentsCommand::class]);
+            $this->commands([
+                PollDocumentsCommand::class,
+                RegisterWebhookCommand::class,
+            ]);
 
             $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
                 if (config('billing.poller.enabled', false)) {
