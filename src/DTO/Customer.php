@@ -13,6 +13,8 @@ final class Customer
         public readonly ?string $address = null,
         public readonly ?string $city = null,
         public readonly ?string $postal = null,
+        /** Greek tax office (ΔΟΥ) — required on B2B invoices to GR-VAT counterparts. */
+        public readonly ?string $doy = null,
     ) {}
 
     public function toArray(): array
@@ -26,6 +28,7 @@ final class Customer
             'address' => $this->address,
             'city' => $this->city,
             'postal' => $this->postal,
+            'doy' => $this->doy,
         ], fn ($v) => $v !== null);
     }
 }

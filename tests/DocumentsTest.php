@@ -81,11 +81,35 @@ class DocumentsTest extends TestCase
         $this->assertSame('MARK-1', $doc->mark);
     }
 
-    public function test_pdf_stream_does_not_send_api_bearer_token(): void
+    public function test_pdf_endpoint_uses_bearer_token_against_authenticated_route(): void
     {
-        // A1: the signed PDF URL lives on a different origin and carries its
-        // own auth; the API Bearer must never be attached to that request.
+        // v0.5.0: PDF lives behind /documents/{id}/pdf (bearer-auth), not a
+        // public signed URL. Bearer MUST be attached to that request.
         Http::fake([
+            'https://billing.test/api/v1/documents/1/pdf' => Http::response('%PDF-1.4 fake', 200, [
+                'Content-Type' => 'application/pdf',
+            ]),
+        ]);
+
+        $bytes = Billing::documents()->pdf(1);
+        $this->assertSame('%PDF-1.4 fake', $bytes);
+
+        Http::assertSent(function ($req) {
+            return $req->url() === 'https://billing.test/api/v1/documents/1/pdf'
+                && $req->hasHeader('Authorization');
+        });
+    }
+
+    public function test_pdfBytes_falls_back_to_signed_url_for_legacy_server(): void
+    {
+        // Backward-compat: when the new /pdf endpoint 404s (talking to a
+        // pre-v0.5.0 server), pdfBytes() falls through to fetch the legacy
+        // pdfUrl. The legacy fetch must NOT carry the API bearer.
+        Http::fake([
+            'https://billing.test/api/v1/documents/1/pdf' => Http::response(
+                ['error' => 'not_found', 'message' => 'no such route'],
+                404,
+            ),
             'https://billing.test/api/v1/documents/1' => Http::response(
                 $this->documentFixture(
                     status: 'submitted',
@@ -94,17 +118,17 @@ class DocumentsTest extends TestCase
                 ),
                 200,
             ),
-            'https://cdn.example.test/signed/abc.pdf' => Http::response('%PDF-1.4 fake', 200, [
+            'https://cdn.example.test/signed/abc.pdf' => Http::response('%PDF-1.4 legacy', 200, [
                 'Content-Type' => 'application/pdf',
             ]),
         ]);
 
         $bytes = Billing::documents()->pdfBytes(1);
-        $this->assertSame('%PDF-1.4 fake', $bytes);
+        $this->assertSame('%PDF-1.4 legacy', $bytes);
 
         Http::assertSent(function ($req) {
             if ($req->url() !== 'https://cdn.example.test/signed/abc.pdf') {
-                return true; // only interested in the PDF request
+                return true; // only interested in the legacy PDF request
             }
 
             return ! $req->hasHeader('Authorization');

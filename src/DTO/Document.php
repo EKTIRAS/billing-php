@@ -17,6 +17,7 @@ final class Document
         public readonly ?string $mark,
         public readonly ?string $uid,
         public readonly ?string $qrUrl,
+        /** @deprecated v0.5.0 — server stopped emitting public signed pdf_url; use Documents::pdf($id) instead. */
         public readonly ?string $pdfUrl,
         public readonly VatType $vatType,
         public readonly float $vatRate,
@@ -27,6 +28,18 @@ final class Document
         public readonly MyDataStatus $myDataStatus,
         public readonly ?string $myDataEnvironment,
         public readonly ?string $issuedAt,
+        public readonly bool $isSimplified = false,
+        public readonly ?string $deliveryStartedAt = null,
+        public readonly ?string $deliveryVehiclePlate = null,
+        public readonly ?string $deliveryAddress = null,
+        public readonly ?string $issuingSoftwareVersion = null,
+        public readonly bool $sendEmailRequested = false,
+        public readonly ?string $emailedAt = null,
+        public readonly ?string $provisionalPdfPath = null,
+        public readonly ?string $viesValidatedAt = null,
+        public readonly ?string $viesReturnedName = null,
+        public readonly ?string $viesReturnedAddress = null,
+        public readonly ?string $customerDoy = null,
         /** @var LineItem[] */
         public readonly array $items = [],
         public readonly array $raw = [],
@@ -52,6 +65,18 @@ final class Document
             myDataStatus: self::enum(MyDataStatus::class, (string) $data['mydata_status'], 'mydata_status'),
             myDataEnvironment: $data['mydata_environment'] ?? null,
             issuedAt: $data['issued_at'] ?? null,
+            isSimplified: (bool) ($data['is_simplified'] ?? false),
+            deliveryStartedAt: $data['delivery_started_at'] ?? null,
+            deliveryVehiclePlate: $data['delivery_vehicle_plate'] ?? null,
+            deliveryAddress: $data['delivery_address'] ?? null,
+            issuingSoftwareVersion: $data['issuing_software_version'] ?? null,
+            sendEmailRequested: (bool) ($data['send_email_requested'] ?? false),
+            emailedAt: $data['emailed_at'] ?? null,
+            provisionalPdfPath: $data['provisional_pdf_path'] ?? null,
+            viesValidatedAt: $data['vies_validated_at'] ?? null,
+            viesReturnedName: $data['vies_returned_name'] ?? null,
+            viesReturnedAddress: $data['vies_returned_address'] ?? null,
+            customerDoy: $data['customer_doy'] ?? null,
             items: array_map(
                 fn (array $i) => LineItem::fromArray($i),
                 $data['items'] ?? [],
@@ -83,5 +108,22 @@ final class Document
     public function hasPdf(): bool
     {
         return $this->pdfUrl !== null;
+    }
+
+    /**
+     * True when either the final or provisional PDF is on disk on the server.
+     * v0.5.0 — use this instead of hasPdf() once you've migrated off
+     * the deprecated pdf_url field.
+     */
+    public function hasPdfArtifact(): bool
+    {
+        return $this->pdfUrl !== null
+            || $this->provisionalPdfPath !== null
+            || ($this->raw['has_pdf'] ?? false);
+    }
+
+    public function isProvisional(): bool
+    {
+        return $this->mark === null && $this->provisionalPdfPath !== null;
     }
 }

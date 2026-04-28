@@ -5,6 +5,7 @@ namespace Ektir\Billing;
 use Ektir\Billing\Http\Client;
 use Ektir\Billing\Resources\Documents;
 use Ektir\Billing\Resources\Products;
+use Ektir\Billing\Resources\Reports;
 use Ektir\Billing\Resources\Stats;
 use Ektir\Billing\Resources\System;
 use Ektir\Billing\Resources\Webhooks;
@@ -16,6 +17,8 @@ class EktirBilling
     protected ?Products $products = null;
 
     protected ?Stats $stats = null;
+
+    protected ?Reports $reports = null;
 
     protected ?Webhooks $webhooks = null;
 
@@ -36,6 +39,11 @@ class EktirBilling
     public function stats(): Stats
     {
         return $this->stats ??= new Stats($this->client);
+    }
+
+    public function reports(): Reports
+    {
+        return $this->reports ??= new Reports($this->client);
     }
 
     public function webhooks(): Webhooks
