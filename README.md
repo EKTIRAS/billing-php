@@ -9,7 +9,31 @@ await PDFs, and react to document state changes through Laravel events.
 - Async‑aware: ships a poller + events so your code reacts when myDATA
   submission completes and the PDF becomes downloadable.
 
-### What's new in v0.4.0
+### What's new in v0.5.0
+
+- **Greek tax-office on the customer DTO** — `Customer::$doy`. Required
+  for B2B invoices to GR-VAT counterparts; v0.4.0 silently dropped it.
+- **Delivery notes (myDATA 9.3) + simplified invoices (1.6)** — builder
+  shorthand `->deliveryNote()->delivery(startedAt, address, plate)` and
+  `->simplified()` flag.
+- **`->sendEmail()` re-enabled** — opt the server into mailing the PDF
+  after MARK arrives (was prohibited under the v0.4.0 server).
+- **`Documents::email($id, force?)`** — re-send endpoint.
+- **`Documents::pdf($id)`** — bearer-authenticated PDF download. The
+  legacy public signed URL flow is removed for security; `pdfBytes()`
+  now uses the new endpoint with a v0.4.x fallback.
+- **`Reports::ossQuarterly($year, $quarter)`** — backs the ΦΠΑ-ΟΣΣ
+  quarterly return.
+- **Webhook v2 signatures** —
+  `WebhookSignature::verifyV2(body, header, secret, timestampMs)`
+  enforces a 5-minute freshness window for replay rejection. Server
+  also emits the `document.confirmed` event (+ matching SDK class).
+- **Document DTO new fields** — `$isSimplified`, `$delivery*`,
+  `$issuingSoftwareVersion`, `$sendEmailRequested`, `$emailedAt`,
+  `$provisionalPdfPath`, `$vies*`, `$customerDoy`, plus
+  `isProvisional()` / `hasPdfArtifact()` helpers.
+
+### Previously, in v0.4.0
 
 - **Real server webhooks** — `Billing::webhooks()->create([...])` + HMAC-SHA256
   signature verification helper. Replaces the polling fallback for apps

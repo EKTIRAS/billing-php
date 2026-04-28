@@ -4,6 +4,75 @@ All notable changes to `ektiras/billing-php` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-04-28
+
+Pairs with the billing server's **fiscal-trust** release. Closes ~30 of the
+audit P0/P1 findings on the server side; this SDK update exposes the new
+fields and endpoints to consumers. **Backward-compatible** — every change
+is additive against the v0.4.0 surface, except the deprecation of
+`Documents::pdfUrl()` and `Document::$pdfUrl` (still present, still work
+when talking to a 0.4.x server).
+
+### Added
+
+- **`Customer::$doy`** — Greek tax office (ΔΟΥ) on the customer DTO.
+  Required on B2B invoices to GR-VAT counterparts; the v0.4.0 server
+  silently rejected this field, the fiscal-trust server accepts and
+  persists it.
+- **`DocumentType::DeliveryNote`** — myDATA 9.x family (δελτίο
+  αποστολής). Builder shorthand `->deliveryNote()` plus `->delivery(
+  startedAt, address, vehiclePlate)`.
+- **`PendingDocument::simplified()`** — myDATA 1.6 (ΑΠΛΟΠΟΙΗΜΕΝΟ
+  ΤΙΜΟΛΟΓΙΟ) for sub-€100 B2B and select B2C cases.
+- **`PendingDocument::sendEmail()`** — opt the server into mailing the
+  customer the PDF after MARK arrives. Re-enables the `send_email`
+  field that was prohibited under the v0.4.0 server.
+- **`Documents::email($id, $force = false)`** — re-send an issued
+  document by enqueueing `SendDocumentEmail`. Returns 202 + `{status:
+  queued}`; 409 with `pdf_not_ready` (surfaces as
+  `EktirBillingException`) if no PDF exists yet.
+- **`Documents::pdf($id)`** — fetch PDF bytes from the new
+  bearer-authenticated endpoint. The legacy public signed URL flow was
+  removed for security (audit P0). `pdfBytes($id)` now uses this path
+  and falls back to the legacy `stream()` when the server still emits
+  `pdf_url` (e.g. talking to a 0.4.x server).
+- **`Reports::ossQuarterly($year, $quarter)`** — per-country / per-rate
+  aggregation backing the ΦΠΑ-ΟΣΣ quarterly return. Available via
+  `Billing::reports()->ossQuarterly(2026, 2)`.
+- **`Document` DTO new fields:** `$isSimplified`, `$deliveryStartedAt`,
+  `$deliveryVehiclePlate`, `$deliveryAddress`,
+  `$issuingSoftwareVersion`, `$sendEmailRequested`, `$emailedAt`,
+  `$provisionalPdfPath`, `$viesValidatedAt`, `$viesReturnedName`,
+  `$viesReturnedAddress`, `$customerDoy`. Plus `Document::isProvisional()`
+  and `Document::hasPdfArtifact()` helpers.
+- **`WebhookSignature::signV2()` + `verifyV2()`** — new
+  `X-Ektir-Signature-Version: v2` envelope signs `{timestampMs}.{body}`,
+  with a default 5-minute freshness window for replay rejection.
+  Receivers should switch to `verifyV2()`; the legacy `verify()` still
+  works against the `X-Ektir-Signature-V1` header that the server keeps
+  emitting for a 90-day bridge.
+- **`DocumentConfirmed` event** — server emits `document.confirmed`
+  alongside `document.submitted` on successful ΑΑΔΕ submission.
+  Subscribe to this for a clean "confirmed by myDATA" feed without
+  retry/cancellation noise.
+
+### Deprecated
+
+- **`Documents::pdfUrl($id)`** and **`Document::$pdfUrl`** — server
+  stopped emitting public signed URLs. Use `Documents::pdf($id)` /
+  `Documents::pdfBytes($id)` instead. Still functional against the
+  v0.4.x server; throws once the server upgrade is complete.
+- **`Client::stream($url)`** — kept for the deprecated `pdfUrl` fallback
+  only. Use `Client::streamAuthed($path)` for new code.
+
+### Server prerequisites
+
+- Server fiscal-trust (post-v1.2) — accepts `customer.doy`, `simplified`,
+  `delivery.*`, `send_email`; emits `document.confirmed`; serves PDFs
+  via authenticated `GET /documents/{id}/pdf`; signs webhooks with v2.
+  Talking to a v1.2 server still works for everything except the new
+  endpoints (which 404).
+
 ## [0.4.0] — 2026-04-20
 
 Pairs with the billing server's **v1.2** release. Five additive capabilities;

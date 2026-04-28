@@ -49,9 +49,11 @@ class Client
 
     /**
      * Download an arbitrary (typically signed) URL without sending the API
-     * Bearer token. Used for PDF fetches — the signed URL carries its own
-     * authentication, so leaking the API key to that host is both
-     * unnecessary and a latent token-leak risk.
+     * Bearer token. Used for legacy PDF fetches against the deprecated
+     * pdf_url field — the signed URL carried its own authentication.
+     *
+     * @deprecated v0.5.0 — server stopped emitting public signed URLs.
+     *             Use streamAuthed() against the bearer-protected endpoint.
      */
     public function stream(string $url): string
     {
@@ -64,6 +66,35 @@ class Client
                     throw: false,
                 )
                 ->get($url);
+        } catch (ConnectionException $e) {
+            throw new TimeoutException($e->getMessage());
+        }
+
+        if (! $response->successful()) {
+            $this->throwFromResponse($response);
+        }
+
+        return $response->body();
+    }
+
+    /**
+     * Download a binary resource from a path on the EKTIR Billing API
+     * sending the Bearer token (e.g. /documents/{id}/pdf since v0.5.0).
+     * Returns the raw body. Throws EktirBillingException on non-2xx.
+     */
+    public function streamAuthed(string $path): string
+    {
+        try {
+            $response = Http::accept('application/pdf')
+                ->withToken($this->apiKey)
+                ->timeout($this->timeout * 2)
+                ->retry(
+                    $this->retryTimes,
+                    $this->retrySleepMs,
+                    fn ($exception) => $exception instanceof ConnectionException,
+                    throw: false,
+                )
+                ->get($this->url($path));
         } catch (ConnectionException $e) {
             throw new TimeoutException($e->getMessage());
         }

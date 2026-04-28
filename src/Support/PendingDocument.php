@@ -38,6 +38,16 @@ class PendingDocument
 
     protected ?string $notes = null;
 
+    protected bool $simplified = false;
+
+    protected bool $sendEmail = false;
+
+    protected ?string $deliveryStartedAt = null;
+
+    protected ?string $deliveryVehiclePlate = null;
+
+    protected ?string $deliveryAddress = null;
+
     public function __construct(protected Documents $documents) {}
 
     public function receipt(): self
@@ -57,6 +67,13 @@ class PendingDocument
     public function creditNote(): self
     {
         $this->type = DocumentType::CreditNote;
+
+        return $this;
+    }
+
+    public function deliveryNote(): self
+    {
+        $this->type = DocumentType::DeliveryNote;
 
         return $this;
     }
@@ -131,10 +148,47 @@ class PendingDocument
         return $this;
     }
 
+    /**
+     * Mark this invoice as ΑΠΛΟΠΟΙΗΜΕΝΟ ΤΙΜΟΛΟΓΙΟ (myDATA 1.6 instead of 1.1).
+     * Greek tax law: applies to certain sub-€100 B2B and select B2C cases.
+     * Only meaningful with invoice() — receipts and credit-notes ignore it.
+     */
+    public function simplified(bool $value = true): self
+    {
+        $this->simplified = $value;
+
+        return $this;
+    }
+
+    /**
+     * Required when type is delivery_note. started_at must be ISO-8601;
+     * vehicle_plate and address must match what's physically on the delivery.
+     */
+    public function delivery(string $startedAt, string $address, ?string $vehiclePlate = null): self
+    {
+        $this->deliveryStartedAt = $startedAt;
+        $this->deliveryAddress = $address;
+        $this->deliveryVehiclePlate = $vehiclePlate;
+
+        return $this;
+    }
+
+    /**
+     * Ask the server to email the customer the PDF after MARK arrives (or
+     * the provisional PDF if myDATA is slow). Default off — most integrators
+     * deliver email themselves. The flag is persisted as send_email_requested.
+     */
+    public function sendEmail(bool $value = true): self
+    {
+        $this->sendEmail = $value;
+
+        return $this;
+    }
+
     public function toArray(): array
     {
         if (! $this->type) {
-            throw new InvalidBuilderStateException('Document type is required. Call receipt(), invoice() or creditNote().');
+            throw new InvalidBuilderStateException('Document type is required. Call receipt(), invoice(), creditNote() or deliveryNote().');
         }
         if (! $this->customer) {
             throw new InvalidBuilderStateException('Customer is required. Call forCustomer($customer).');
@@ -145,15 +199,34 @@ class PendingDocument
         if (! $this->paymentMethod) {
             throw new InvalidBuilderStateException('Payment method is required.');
         }
+        if ($this->type === DocumentType::DeliveryNote && ($this->deliveryStartedAt === null || $this->deliveryAddress === null)) {
+            throw new InvalidBuilderStateException('delivery_note requires delivery(startedAt, address). Call ->delivery(...) before create().');
+        }
 
-        return array_filter([
+        $payload = [
             'document_type' => $this->type->value,
             'customer' => $this->customer->toArray(),
             'items' => array_map(fn (Item $i) => $i->toArray(), $this->items),
             'payment_method' => $this->paymentMethod->value,
             'payment_terms_days' => $this->paymentTermsDays,
             'notes' => $this->notes,
-        ], fn ($v) => $v !== null);
+        ];
+
+        if ($this->simplified) {
+            $payload['simplified'] = true;
+        }
+        if ($this->sendEmail) {
+            $payload['send_email'] = true;
+        }
+        if ($this->deliveryStartedAt !== null || $this->deliveryAddress !== null) {
+            $payload['delivery'] = array_filter([
+                'started_at' => $this->deliveryStartedAt,
+                'address' => $this->deliveryAddress,
+                'vehicle_plate' => $this->deliveryVehiclePlate,
+            ], fn ($v) => $v !== null);
+        }
+
+        return array_filter($payload, fn ($v) => $v !== null);
     }
 
     public function create(): Document

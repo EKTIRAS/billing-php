@@ -54,6 +54,31 @@ class Documents
     }
 
     /**
+     * Re-send the document email. The server enqueues SendDocumentEmail and
+     * returns 202; if no PDF exists yet (final or provisional), it returns
+     * 409 ({error: pdf_not_ready}) which surfaces here as
+     * EktirBillingException. Pass force=true to bypass the emailed_at
+     * idempotency guard.
+     *
+     * @return array<string, mixed>  {status: "queued", force: bool}
+     */
+    public function email(int $id, bool $force = false): array
+    {
+        return $this->client->post("documents/{$id}/email", $force ? ['force' => true] : []);
+    }
+
+    /**
+     * Stream the PDF bytes from the bearer-protected endpoint. v0.5.0 — the
+     * legacy pdf_url signed-URL flow was removed for security (audit P0).
+     * Returns 409 (EktirBillingException) when neither the final nor the
+     * provisional PDF is on disk yet.
+     */
+    public function pdf(int $id): string
+    {
+        return $this->client->streamAuthed("documents/{$id}/pdf");
+    }
+
+    /**
      * Re-render the PDF for a document. The server nulls pdf_path, deletes
      * the old PDF from disk and re-dispatches GenerateDocumentPdf. Returns
      * the document in its transitional (pending-pdf) state.
@@ -132,11 +157,18 @@ class Documents
     }
 
     /**
-     * Fetch the PDF bytes by first re-loading the document (to get a fresh
-     * signed URL) and then streaming it. Returns the raw binary.
+     * Fetch PDF bytes. v0.5.0 — preferred path is the new authenticated
+     * endpoint (GET /documents/{id}/pdf with bearer token). Falls back to
+     * the legacy signed URL when the server still emits pdf_url.
      */
     public function pdfBytes(int $id): string
     {
+        try {
+            return $this->pdf($id);
+        } catch (\Ektir\Billing\Exceptions\NotFoundException $e) {
+            // Old server (pre-v0.5.0) — fall through to the deprecated path.
+        }
+
         $doc = $this->find($id);
         if (! $doc->hasPdf()) {
             throw new \RuntimeException("Document {$id} has no PDF yet. Use awaitPdf() first.");
@@ -146,9 +178,9 @@ class Documents
     }
 
     /**
-     * Return a freshly-signed PDF URL (valid 24h from now). Null if the
-     * document has no PDF yet. Share this link with your customer, put it
-     * in an email template, stick it in a CRM — whatever.
+     * @deprecated v0.5.0 — server stopped emitting public signed pdf_url.
+     *             Use pdf($id) or pdfBytes($id) instead, which fetch via
+     *             the bearer-authenticated endpoint.
      */
     public function pdfUrl(int $id): ?string
     {
